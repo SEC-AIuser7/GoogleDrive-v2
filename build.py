@@ -47,7 +47,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EXCEL_FILE = os.path.join(SCRIPT_DIR, "共有ドライブフォルダ構成CSV.xlsx")
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "build_config.json")
 OUTPUT_FILE = os.path.join(SCRIPT_DIR, "data.js")
-SHEET_PREFIX = "全共有ドライブ抽出_"  # 出力結果_YYYYMMDD_HHMMSS のシートを自動検出
+SHEET_PREFIX = "全共有ドライブ抽出_"  # 全共有ドライブ抽出_YYYYMMDD_HHMMSS のシートを自動検出
 
 # レイアウト定数 (drive.html の SVG 描画と一致させること)
 NODE_HEIGHT = 22
@@ -83,7 +83,7 @@ def load_config():
 # データ読み込み: Excel / Sheets を抽象化
 # ============================================================
 def find_target_sheet_xls(excel_path):
-    """Excel から 出力結果_YYYYMMDD_HHMMSS シートを自動検出"""
+    """Excel から 全共有ドライブ抽出__YYYYMMDD_HHMMSS シートを自動検出"""
     xls = pd.ExcelFile(excel_path)
     candidates = [s for s in xls.sheet_names if s.startswith(SHEET_PREFIX)]
     if not candidates:
@@ -158,7 +158,7 @@ def load_from_sheets(cfg):
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(sheets_id)
 
-    # タブ名指定があればそれ、なければ "出力結果_*" を自動検出
+    # タブ名指定があればそれ、なければ "全共有ドライブ抽出__*" を自動検出
     tab_name = os.environ.get("SHEETS_TAB") or cfg.get("sheets_tab")
     if not tab_name:
         all_titles = [ws.title for ws in sh.worksheets()]
@@ -279,23 +279,36 @@ def parse_users_from_row(row):
 
     フォーマットA (旧 Excel): "ユーザー1" 〜 "ユーザー30" 列に1人ずつ
     フォーマットB (新 Sheets): "全権限（メール/役割）" 列に1セルでまとめて
+
+    ヘッダ名のゆらぎ (全角/半角括弧、空白、区切り文字違い) にも対応。
     """
     users = []
 
-    # フォーマットB: 「全権限（メール/役割）」列があれば優先 (Sheets版)
-    permission_col_candidates = [
-        "全権限（メール/役割）",
-        "全権限(メール/役割)",
-        "全権限",
-        "アクセス権限",
-        "権限",
-    ]
-    for col in permission_col_candidates:
-        if col in row.index if hasattr(row, "index") else col in row:
-            cell = row.get(col, "")
-            if cell and str(cell).strip():
-                users = parse_permission_cell(cell)
+    # フォーマットB: 「全権限」を含む列を探す (ゆるい部分一致)
+    # row が pandas.Series なら .index でカラム名一覧、dict なら keys
+    try:
+        keys = list(row.index)
+    except AttributeError:
+        keys = list(row.keys()) if hasattr(row, "keys") else []
+
+    permission_col = None
+    for key in keys:
+        key_str = str(key)
+        # 「全権限」を含む or 「権限」を含む列を権限カラムとみなす
+        if "全権限" in key_str or "アクセス権限" in key_str:
+            permission_col = key
+            break
+    # 見つからなければ「権限」だけを含む列をフォールバック
+    if permission_col is None:
+        for key in keys:
+            if "権限" in str(key):
+                permission_col = key
                 break
+
+    if permission_col is not None:
+        cell = row.get(permission_col, "")
+        if cell and str(cell).strip():
+            users = parse_permission_cell(cell)
 
     # フォーマットA: 「ユーザー1」〜「ユーザー30」(旧 Excel 形式)
     if not users:
@@ -584,6 +597,8 @@ def main():
     print(f"\n[1/4] データ読み込み...")
     df, sheet_name = load_data()
     print(f"      行数: {len(df)}, 列数: {len(df.columns)}")
+    # デバッグ: カラム名一覧 (権限カラムが正しく認識されるか確認用)
+    print(f"      カラム一覧: {list(df.columns)}")
 
     print(f"\n[2/4] ドライブ単位でツリー構築 + レイアウト計算...")
     drives = build_drives(df)
@@ -594,6 +609,17 @@ def main():
     print(f"\n[3/4] ユーザー逆引きインデックス構築...")
     user_index = build_user_index(drives)
     print(f"      ユニークユーザー数: {len(user_index)}")
+    # デバッグ: 権限解析サンプル (最初に users が入ってるフォルダを1件表示)
+    for d in drives:
+        for f in d["folders"]:
+            if f["users"]:
+                print(f"      [サンプル] ドライブ='{d['name']}' フォルダ='{f['name']}' ユーザー={f['users'][:3]}...")
+                break
+        else:
+            continue
+        break
+    else:
+        print(f"      [警告] どのフォルダにもユーザー情報が見つかりませんでした")
 
     print(f"\n[4/4] data.js 出力...")
     size = write_data_js(drives, user_index, sheet_name, OUTPUT_FILE)
