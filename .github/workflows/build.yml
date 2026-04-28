@@ -1,0 +1,60 @@
+name: Rebuild data.js from Google Sheets
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'build.py'
+      - 'build_config.json'
+      - '.github/workflows/build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pandas openpyxl gspread google-auth
+
+      - name: Build data.js from Google Sheets
+        env:
+          DATA_SOURCE: sheets
+          SHEETS_ID: ${{ secrets.SHEETS_ID }}
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: |
+          python build.py
+
+      - name: Check for changes
+        id: check_changes
+        run: |
+          if git diff --quiet data.js; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "data.js に変更なし"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "data.js が更新されました"
+          fi
+
+      - name: Commit and push if changed
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data.js
+          git commit -m "chore: data.js を自動更新 ($(date -u +'%Y-%m-%d %H:%M UTC'))"
+          git push
