@@ -199,6 +199,122 @@ def load_data():
 
 
 # ============================================================
+# ユーザー権限カラム解析 (2フォーマット対応)
+# ============================================================
+# Google Drive API のロール名を日本語にマッピング
+ROLE_MAP_EN_TO_JA = {
+    "owner": "オーナー",
+    "organizer": "オーナー",
+    "fileOrganizer": "コンテンツ管理者",
+    "writer": "編集者",
+    "commenter": "コメント可",
+    "reader": "閲覧者",
+}
+
+
+def normalize_role(role):
+    """役割名を日本語に正規化。既に日本語ならそのまま返す。"""
+    if not role:
+        return ""
+    role_lower = role.strip().lower()
+    # 大文字小文字を吸収するため、マップ側も小文字化して比較
+    for key, val in ROLE_MAP_EN_TO_JA.items():
+        if key.lower() == role_lower:
+            return val
+    return role.strip()
+
+
+def parse_permission_cell(cell):
+    """
+    1セルの権限情報を解析。例:
+      "tanaka@example.com(writer) / suzuki@example.com(reader)"
+      → ["tanaka@example.com (編集者)", "suzuki@example.com (閲覧者)"]
+
+    区切り文字: " / " または "/" または "," (フォールバック)
+    各エントリ形式: "email(role)" または "email"
+    """
+    if not cell:
+        return []
+    s = str(cell).strip()
+    if not s:
+        return []
+
+    # 区切り文字で分割 (改行・スラッシュ・カンマに対応)
+    # 優先順: " / " > "\n" > "/"
+    parts = []
+    if " / " in s:
+        parts = s.split(" / ")
+    elif "\n" in s:
+        parts = s.split("\n")
+    elif "/" in s:
+        # スラッシュ区切りだが、URLっぽい場合 (http://, https://) は分割しない
+        # メアドにスラッシュは含まれないので素直に分割
+        parts = s.split("/")
+    else:
+        parts = [s]
+
+    results = []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        # "email(role)" 形式を抽出
+        m = re.match(r"^(.+?)\s*\(([^)]+)\)\s*$", p)
+        if m:
+            email = m.group(1).strip()
+            role = normalize_role(m.group(2))
+            if role:
+                results.append(f"{email} ({role})")
+            else:
+                results.append(email)
+        else:
+            # role 部分なし
+            results.append(p)
+    return results
+
+
+def parse_users_from_row(row):
+    """
+    1行のユーザー権限情報を、フォーマットを自動判定して取得。
+
+    フォーマットA (旧 Excel): "ユーザー1" 〜 "ユーザー30" 列に1人ずつ
+    フォーマットB (新 Sheets): "全権限（メール/役割）" 列に1セルでまとめて
+    """
+    users = []
+
+    # フォーマットB: 「全権限（メール/役割）」列があれば優先 (Sheets版)
+    permission_col_candidates = [
+        "全権限（メール/役割）",
+        "全権限(メール/役割)",
+        "全権限",
+        "アクセス権限",
+        "権限",
+    ]
+    for col in permission_col_candidates:
+        if col in row.index if hasattr(row, "index") else col in row:
+            cell = row.get(col, "")
+            if cell and str(cell).strip():
+                users = parse_permission_cell(cell)
+                break
+
+    # フォーマットA: 「ユーザー1」〜「ユーザー30」(旧 Excel 形式)
+    if not users:
+        for i in range(1, 31):
+            u = str(row.get(f"ユーザー{i}", "")).strip()
+            if u:
+                # 既に "email (役割)" 形式なら役割名を日本語化
+                m = re.match(r"^(.+?)\s*\(([^)]+)\)\s*$", u)
+                if m:
+                    email = m.group(1).strip()
+                    role = normalize_role(m.group(2))
+                    users.append(f"{email} ({role})" if role else email)
+                else:
+                    users.append(u)
+
+    return users
+
+
+# ============================================================
 # ドライブ単位でツリー構築
 # ============================================================
 def build_folders_for_drive(drive_rows):
@@ -245,12 +361,10 @@ def build_folders_for_drive(drive_rows):
 
         path_tuple = tuple(levels)
 
-        # ユーザー1〜30 を取得
-        users = []
-        for i in range(1, 31):
-            u = str(row.get(f"ユーザー{i}", "")).strip()
-            if u:
-                users.append(u)
+        # ユーザー権限を取得 (2つのフォーマットに対応)
+        # フォーマットA: 「ユーザー1」〜「ユーザー30」列に1人ずつ (旧Excel形式)
+        # フォーマットB: 「全権限（メール/役割）」列に「a@x.com(writer) / b@y.com(reader)」形式
+        users = parse_users_from_row(row)
 
         url = str(row.get("フォルダURL", "")).strip()
 
@@ -328,9 +442,28 @@ def compute_layout(folders):
 # ============================================================
 # 全ドライブをグループ化して構築
 # ============================================================
+def detect_drive_name_column(df):
+    """ドライブ名のカラムを自動検出 (Excel旧形式とSheets新形式の両対応)"""
+    candidates = [
+        "管理名称(Sheet1 B列)",   # 旧 Excel 形式
+        "共有ドライブ名",           # 新 Sheets 形式
+        "ドライブ名",
+        "管理名称",
+    ]
+    for col in candidates:
+        if col in df.columns:
+            return col
+    raise ValueError(
+        f"ドライブ名カラムが見つかりません。期待したカラム名: {candidates}\n"
+        f"  実際のカラム一覧: {list(df.columns)}"
+    )
+
+
 def build_drives(df):
     drives = []
-    grouped = df.groupby("管理名称(Sheet1 B列)", sort=False)
+    drive_name_col = detect_drive_name_column(df)
+    print(f"  ドライブ名カラム: '{drive_name_col}'")
+    grouped = df.groupby(drive_name_col, sort=False)
 
     drive_index = 0
     for drive_name, group in grouped:
