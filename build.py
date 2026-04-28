@@ -47,7 +47,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EXCEL_FILE = os.path.join(SCRIPT_DIR, "共有ドライブフォルダ構成CSV.xlsx")
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "build_config.json")
 OUTPUT_FILE = os.path.join(SCRIPT_DIR, "data.js")
-SHEET_PREFIX = "出力結果_"  # 出力結果_YYYYMMDD_HHMMSS のシートを自動検出
+SHEET_PREFIX = "全共有ドライブ抽出_"  # 出力結果_YYYYMMDD_HHMMSS のシートを自動検出
 
 # レイアウト定数 (drive.html の SVG 描画と一致させること)
 NODE_HEIGHT = 22
