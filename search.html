@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>アクセス権限検索 — Drive Visualizer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+JP:wght@400;500;700;900&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">DATA を読み込んでいます...</div>
+</div>
+
+<div class="container">
+  <div class="nav-tabs">
+    <a class="tab" href="portal.html"><span style="font-size:14px">📁</span> 共有ドライブ一覧</a>
+    <a class="tab active search-tab" href="search.html"><span style="font-size:14px">🔍</span> アクセス権限検索</a>
+  </div>
+  <div class="page-head">
+    <h1>アクセス権限 <span class="accent">検索</span></h1>
+    <p>メールアドレスを入力すると、そのユーザーがアクセス権限を持つ<strong style="color:var(--text)">全共有ドライブ</strong>と<strong style="color:var(--text)">全フォルダ階層パス</strong>が一覧表示されます。「詳細マップを開く」でツリー図を開くと、該当フォルダがオレンジでハイライト表示されます。</p>
+  </div>
+
+  <div class="search-hero">
+    <div class="search-row">
+      <div class="search-input-wrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input id="searchInput" type="text" list="userDL" placeholder="メールアドレスを入力... (部分一致対応)" autocomplete="off" spellcheck="false">
+        <datalist id="userDL"></datalist>
+      </div>
+      <button class="clear-btn" onclick="clearSearch()">CLEAR</button>
+    </div>
+    <div class="hint">部分一致対応。例: 「@dxhr.inc」で全社員、「yamada」で名前検索</div>
+
+    <div class="quick-users">
+      <div class="quick-users-label">🔥 アクセス数トップ</div>
+      <div class="user-chip-list" id="chipList"></div>
+    </div>
+  </div>
+
+  <div class="results-header" id="resultsHeader" style="display:none">
+    <div class="title">検索結果</div>
+    <div class="meta">
+      <b id="matchUserCount">0</b> users · 
+      <b id="matchDriveCount">0</b> drive accesses · 
+      <b id="matchFolderCount">0</b> folders
+    </div>
+  </div>
+
+  <div id="results"></div>
+
+  <div class="footer" id="footerInfo">Drive Visualizer · 2026</div>
+</div>
+
+<script src="data.js"></script>
+<script>
+(function () {
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+
+  function init() {
+    if (typeof window.DRIVE_DB === 'undefined') {
+      document.getElementById('loadingOverlay').innerHTML =
+        '<div style="color:#ff6b6b; font-family:monospace; padding:20px; text-align:center">' +
+        '<div style="font-size:18px; margin-bottom:8px">⚠ data.js を読み込めませんでした</div>' +
+        '<div style="color:#8a8a8a; font-size:13px">同じフォルダに data.js があるか確認してください</div></div>';
+      return;
+    }
+
+    var db = window.DRIVE_DB;
+    var meta = db.meta;
+
+    document.getElementById('footerInfo').textContent =
+      'Drive Visualizer · 2026 · ' +
+      meta.drive_count + ' drives · ' +
+      meta.folder_count.toLocaleString() + ' nodes · ' +
+      meta.user_count + ' users · 生成 ' + (meta.generated_at || '');
+
+    // ドライブIDで早く引けるマップ
+    var driveById = {};
+    db.drives.forEach(function (d) { driveById[d.id] = d; });
+
+    // ユーザーのアクセス情報を整形:
+    // userEmail -> [{driveId, driveName, folders: [{path, role, url}, ...]}]
+    var USER_ACCESS = {};
+    Object.keys(db.users).forEach(function (email) {
+      var entries = db.users[email];
+      var byDrive = {};
+      entries.forEach(function (entry) {
+        var drive = driveById[entry.drive_id];
+        if (!drive) return;
+        var folder = drive.folders[entry.folder_id];
+        if (!folder) return;
+        var path = buildPath(drive, folder);
+        if (!byDrive[entry.drive_id]) {
+          byDrive[entry.drive_id] = { driveId: entry.drive_id, driveName: drive.name, folders: [] };
+        }
+        byDrive[entry.drive_id].folders.push({
+          path: path,
+          role: entry.role || '',
+          url: folder.url || '',
+        });
+      });
+      USER_ACCESS[email] = Object.keys(byDrive).map(function (k) { return byDrive[k]; });
+    });
+
+    function buildPath(drive, folder) {
+      var parts = [];
+      var cur = folder;
+      while (cur) {
+        parts.unshift(cur.name);
+        if (cur.parent === null || cur.parent === undefined) break;
+        cur = drive.folders[cur.parent];
+      }
+      return parts.join(' / ');
+    }
+
+    var ALL_USERS = Object.keys(USER_ACCESS).sort();
+
+    // datalist
+    var dlHtml = ALL_USERS.map(function (e) {
+      return '<option value="' + escapeHtml(e) + '">';
+    }).join('');
+    document.getElementById('userDL').innerHTML = dlHtml;
+
+    // トップユーザー (フォルダ数が多い順 12人)
+    var userSummary = ALL_USERS.map(function (email) {
+      var drives = USER_ACCESS[email];
+      var totalFolders = drives.reduce(function (s, d) { return s + d.folders.length; }, 0);
+      return [email, drives.length, totalFolders];
+    }).sort(function (a, b) { return b[2] - a[2]; });
+
+    var topUsers = userSummary.slice(0, 12);
+    var chipList = document.getElementById('chipList');
+    chipList.innerHTML = topUsers.map(function (u) {
+      return '<span class="user-chip" data-email="' + escapeHtml(u[0]) + '">' +
+        escapeHtml(u[0]) + ' <span style="color:var(--text-faint)">· ' + u[2] + '</span></span>';
+    }).join('');
+    chipList.addEventListener('click', function (e) {
+      var chip = e.target.closest('.user-chip');
+      if (!chip) return;
+      document.getElementById('searchInput').value = chip.dataset.email;
+      doSearch();
+      window.scrollTo({ top: document.getElementById('resultsHeader').offsetTop - 20, behavior: 'smooth' });
+    });
+
+    // ----- 検索 -----
+    var searchInput = document.getElementById('searchInput');
+    var resultsBox = document.getElementById('results');
+    var resultsHeader = document.getElementById('resultsHeader');
+    var searchTimer = null;
+
+    searchInput.addEventListener('input', function () {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(doSearch, 200);
+    });
+
+    function doSearch() {
+      var q = searchInput.value.trim().toLowerCase();
+      if (!q) { resultsBox.innerHTML = ''; resultsHeader.style.display = 'none'; return; }
+      var matched = ALL_USERS.filter(function (u) { return u.toLowerCase().indexOf(q) !== -1; });
+
+      if (matched.length === 0) {
+        resultsHeader.style.display = 'none';
+        resultsBox.innerHTML = '<div class="empty-state"><div class="icon">🔍</div>' +
+          '<h3>該当するユーザーが見つかりませんでした</h3>' +
+          '<p>「' + escapeHtml(searchInput.value) + '」にマッチするメールアドレスは登録されていません。<br>' +
+          '部分一致でも検索できます (例: @dxhr.inc)。</p></div>';
+        return;
+      }
+
+      if (matched.length === 1) {
+        var email = matched[0];
+        var drives = USER_ACCESS[email];
+        var totalFolders = drives.reduce(function (s, d) { return s + d.folders.length; }, 0);
+        document.getElementById('matchUserCount').textContent = '1';
+        document.getElementById('matchDriveCount').textContent = drives.length;
+        document.getElementById('matchFolderCount').textContent = totalFolders;
+        resultsHeader.style.display = 'flex';
+        resultsBox.innerHTML = renderUser(email);
+        bindShowMore();
+      } else {
+        var totalDrives = 0, totalFoldersAll = 0;
+        matched.forEach(function (u) {
+          USER_ACCESS[u].forEach(function (d) {
+            totalDrives++;
+            totalFoldersAll += d.folders.length;
+          });
+        });
+        document.getElementById('matchUserCount').textContent = matched.length;
+        document.getElementById('matchDriveCount').textContent = totalDrives;
+        document.getElementById('matchFolderCount').textContent = totalFoldersAll;
+        resultsHeader.style.display = 'flex';
+        var displayList = matched.slice(0, 100);
+        resultsBox.innerHTML = '<div class="user-list-view">' +
+          displayList.map(function (em) {
+            var dr = USER_ACCESS[em];
+            var totalF = dr.reduce(function (s, d) { return s + d.folders.length; }, 0);
+            return '<div class="user-row" data-email="' + escapeHtml(em) + '">' +
+              '<span class="u-email">' + escapeHtml(em) + '</span>' +
+              '<span class="u-num"><b>' + dr.length + '</b> drives</span>' +
+              '<span class="u-num"><b>' + totalF + '</b> folders</span>' +
+              '<span class="u-action">VIEW →</span>' +
+              '</div>';
+          }).join('') +
+          (matched.length > 100
+            ? '<div class="empty-state" style="margin-top:14px"><p>他 ' + (matched.length - 100) + ' 件のユーザーがマッチしています。検索をより絞り込んでください。</p></div>'
+            : '') + '</div>';
+        resultsBox.querySelectorAll('.user-row').forEach(function (row) {
+          row.addEventListener('click', function () {
+            searchInput.value = row.dataset.email;
+            doSearch();
+            window.scrollTo({ top: resultsHeader.offsetTop - 20, behavior: 'smooth' });
+          });
+        });
+      }
+    }
+
+    function renderUser(email) {
+      var drives = USER_ACCESS[email];
+      var totalFolders = drives.reduce(function (s, d) { return s + d.folders.length; }, 0);
+      var sortedDrives = drives.slice().sort(function (a, b) { return b.folders.length - a.folders.length; });
+
+      var driveBlocks = sortedDrives.map(function (d) {
+        var driveName = d.driveName;
+        var url = 'drive.html?id=' + d.driveId + '&email=' + encodeURIComponent(email);
+        var maxShow = 8;
+        var shown = d.folders.slice(0, maxShow);
+        var hidden = d.folders.slice(maxShow);
+        var safeId = email.replace(/[^a-z0-9]/gi, '_') + '_' + d.driveId;
+        var foldersHtml = shown.map(renderFolder).join('');
+        var hiddenHtml = hidden.length > 0
+          ? '<ul class="folder-list" id="hidden-' + safeId + '" style="display:none; margin-top:3px">' +
+            hidden.map(renderFolder).join('') + '</ul>' +
+            '<button class="show-more" data-target="hidden-' + safeId + '">さらに ' + hidden.length + ' フォルダを表示</button>'
+          : '';
+        return '<div class="drive-item">' +
+          '<div class="drive-item-head">' +
+          '<span class="drive-name"><span class="icon">▸</span> ' + escapeHtml(driveName) +
+          ' <span style="color:var(--text-faint); font-family:\'JetBrains Mono\', monospace; font-size:11px; font-weight:normal">· ' +
+          d.folders.length + ' folders</span></span>' +
+          '<a class="drive-open-btn" href="' + url + '" target="_blank">🗺 詳細マップを開く →</a>' +
+          '</div>' +
+          '<ul class="folder-list">' + foldersHtml + '</ul>' +
+          hiddenHtml +
+          '</div>';
+      }).join('');
+
+      return '<div class="user-card">' +
+        '<div class="user-card-head">' +
+        '<span class="email">' + escapeHtml(email) + '</span>' +
+        '<span class="summary"><b>' + drives.length + '</b> drives · <b>' + totalFolders + '</b> folders</span>' +
+        '</div>' +
+        '<div class="drive-list">' + driveBlocks + '</div>' +
+        '</div>';
+    }
+
+    function renderFolder(f) {
+      var path = f.path, role = f.role, url = f.url;
+      var parts = path.split(' / ');
+      var last = parts[parts.length - 1];
+      var head = parts.slice(0, -1);
+      var pathHtml = head.length > 0
+        ? head.map(escapeHtml).join('<span class="sep">/</span>') +
+          '<span class="sep">/</span>' +
+          '<span class="leaf">' + escapeHtml(last) + '</span>'
+        : '<span class="leaf">' + escapeHtml(last) + '</span>';
+      var roleCls = role ? 'role-badge role-' + role.replace(/ /g, '') : 'role-badge';
+      var roleHtml = role ? '<span class="' + roleCls + '">' + escapeHtml(role) + '</span>' : '';
+      var urlHtml = url ? '<a class="open-link" href="' + escapeHtml(url) + '" target="_blank">↗</a>' : '';
+      return '<li><span class="folder-path">' + pathHtml + '</span>' + roleHtml + urlHtml + '</li>';
+    }
+
+    function bindShowMore() {
+      resultsBox.querySelectorAll('.show-more').forEach(function (btn) {
+        if (btn.dataset.bound) return;
+        btn.dataset.bound = '1';
+        btn.addEventListener('click', function () {
+          var el = document.getElementById(btn.dataset.target);
+          if (el) el.style.display = 'flex';
+          btn.style.display = 'none';
+        });
+      });
+    }
+
+    window.clearSearch = function () {
+      searchInput.value = '';
+      resultsBox.innerHTML = '';
+      resultsHeader.style.display = 'none';
+      searchInput.focus();
+    };
+
+    document.getElementById('loadingOverlay').classList.add('hidden');
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+
+</body>
+</html>

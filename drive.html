@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Drive Map — Drive Visualizer</title>
+<meta name="viewport" content="width=1400, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+JP:wght@400;500;700&family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">マップを描画しています...</div>
+</div>
+
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="crumb">
+      <a href="portal.html">← 共有ドライブ一覧</a>
+      <a href="search.html">🔍 権限検索</a>
+      <span class="title" id="driveTitle">読み込み中...</span>
+    </div>
+    <div class="stats">
+      <span><b id="statNodes">—</b> nodes</span>
+      <span><b id="statUsers">—</b> users</span>
+    </div>
+  </div>
+</div>
+
+<div class="search-bar">
+  <div class="search-input-wrap">
+    <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input id="searchInput" type="text" list="userDatalist" placeholder="メールアドレスを入力してアクセス権限を検索..." autocomplete="off" spellcheck="false">
+    <datalist id="userDatalist"></datalist>
+  </div>
+  <button class="clear-btn" onclick="clearSearch()">Clear</button>
+</div>
+
+<div class="main-grid no-panel" id="mainGrid">
+  <div class="svg-container" id="svgContainer">
+    <!-- SVG は JS で動的に挿入される -->
+  </div>
+  <div class="side-panel" id="sidePanel">
+    <div class="panel-title">
+      <span>検索結果</span>
+      <b><span id="resultCount">0</span> hits</b>
+    </div>
+    <div id="panelBody"></div>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script src="data.js"></script>
+<script src="render.js"></script>
+<script>
+(function () {
+  // URL クエリ ?id=NNN からドライブIDを取得
+  function getDriveIdFromUrl() {
+    try {
+      var params = new URLSearchParams(window.location.search);
+      var id = params.get('id');
+      if (id) return id;
+    } catch (_) {}
+    // ハッシュも試す
+    var h = window.location.hash;
+    if (h.indexOf('#id=') === 0) return h.substring(4);
+    return null;
+  }
+
+  function showError(msg, sub) {
+    var ov = document.getElementById('loadingOverlay');
+    ov.innerHTML =
+      '<div style="color:#ff6b6b; font-family:monospace; padding:20px; text-align:center; max-width:500px">' +
+      '<div style="font-size:18px; margin-bottom:8px">⚠ ' + msg + '</div>' +
+      (sub ? '<div style="color:#8a8a8a; font-size:13px; margin-top:8px">' + sub + '</div>' : '') +
+      '<div style="margin-top:20px"><a href="portal.html" style="color:#8fd9c7">← 一覧に戻る</a></div></div>';
+  }
+
+  function init() {
+    if (typeof window.DRIVE_DB === 'undefined') {
+      showError('data.js を読み込めませんでした', '同じフォルダに data.js があるか確認してください');
+      return;
+    }
+
+    var driveId = getDriveIdFromUrl();
+    if (!driveId) {
+      showError('ドライブIDが指定されていません', 'URL に ?id=001 のように指定してください');
+      return;
+    }
+
+    var drive = window.DRIVE_DB.drives.find(function (d) { return d.id === driveId; });
+    if (!drive) {
+      showError('ドライブ "' + driveId + '" が見つかりません');
+      return;
+    }
+
+    // タイトルとメタ情報
+    document.title = drive.name + ' — Drive Map';
+    document.getElementById('driveTitle').textContent = drive.name;
+    document.getElementById('statNodes').textContent = drive.folder_count;
+    document.getElementById('statUsers').textContent = drive.user_count;
+
+    // datalist (このドライブ内のユーザー一覧)
+    var userSet = {};
+    drive.folders.forEach(function (f) {
+      f.users.forEach(function (u) {
+        var m = u.match(/^(.+?)\s*\(([^)]+)\)\s*$/);
+        var email = m ? m[1].trim() : u.trim();
+        userSet[email] = true;
+      });
+    });
+    var dlOptions = Object.keys(userSet).sort().map(function (e) {
+      return '<option value="' + DriveRender.escapeHtml(e) + '">';
+    }).join('');
+    document.getElementById('userDatalist').innerHTML = dlOptions;
+
+    // SVG 構築
+    var built = DriveRender.buildSvg(drive);
+    var svgContainer = document.getElementById('svgContainer');
+    svgContainer.innerHTML = '';
+    svgContainer.appendChild(built.svg);
+
+    var nodeMap = built.nodeMap;
+    var connMap = built.connMap;
+    var allNodes = Array.from(built.svg.querySelectorAll('.node'));
+    var allConns = Array.from(built.svg.querySelectorAll('.conn'));
+
+    // 折りたたみ状態
+    var collapsedSet = new Set();
+
+    // ----- ノードクリック動作 -----
+    var tooltip = document.getElementById('tooltip');
+
+    allNodes.forEach(function (n) {
+      var rect = n.querySelector('.node-rect');
+      var text = n.querySelector('.node-text');
+      var info = n.querySelector('.info-icon');
+      [rect, text].forEach(function (el) {
+        if (!el) return;
+        el.addEventListener('click', function (e) {
+          if (e.target.closest('.info-icon')) return;
+          var url = n.dataset.url;
+          if (url) window.open(url, '_blank');
+        });
+      });
+      // info アイコンのクリックで折りたたみ切替
+      if (info) {
+        info.addEventListener('mouseenter', function (e) { showTip(e, n); });
+        info.addEventListener('mousemove', function (e) { positionTip(e); });
+        info.addEventListener('mouseleave', hideTip);
+        info.addEventListener('click', function (e) {
+          e.stopPropagation();
+          toggleCollapse(parseInt(n.dataset.id, 10));
+        });
+      }
+    });
+
+    function toggleCollapse(folderId) {
+      if (collapsedSet.has(folderId)) {
+        collapsedSet.delete(folderId);
+        nodeMap[folderId].classList.remove('collapsed');
+      } else {
+        collapsedSet.add(folderId);
+        nodeMap[folderId].classList.add('collapsed');
+      }
+      // 再レイアウト
+      var result = DriveRender.relayout(drive.folders, collapsedSet);
+      DriveRender.applyLayout(drive, nodeMap, connMap, result);
+    }
+
+    function showTip(e, node) {
+      var name = node.dataset.name;
+      var users;
+      try { users = JSON.parse(node.dataset.users); } catch (_) { users = []; }
+      var h = '<div class="tt-header">' + DriveRender.escapeHtml(name) + '</div>';
+      if (users.length === 0) {
+        h += '<div class="tt-empty">権限情報なし</div>';
+      } else {
+        users.forEach(function (u) {
+          h += '<div class="tt-user">' + DriveRender.escapeHtml(u.email) +
+            ' <span class="tt-role">' + (u.role ? '(' + DriveRender.escapeHtml(u.role) + ')' : '') + '</span></div>';
+        });
+      }
+      // 折りたたみ状態のヒント
+      h += '<div style="margin-top:6px; padding-top:6px; border-top:1px solid #2e2e2e; color:#8a8a8a; font-size:10px">i アイコンをクリックで子フォルダを折りたたみ</div>';
+      tooltip.innerHTML = h;
+      tooltip.style.display = 'block';
+      positionTip(e);
+    }
+    function positionTip(e) {
+      var pad = 14;
+      var x = e.clientX + pad, y = e.clientY + pad;
+      var tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+      if (x + tw > window.innerWidth) x = e.clientX - tw - pad;
+      if (y + th > window.innerHeight) y = e.clientY - th - pad;
+      tooltip.style.left = x + 'px';
+      tooltip.style.top = y + 'px';
+    }
+    function hideTip() { tooltip.style.display = 'none'; }
+
+    // ----- 検索 -----
+    var searchInput = document.getElementById('searchInput');
+    var sidePanel = document.getElementById('sidePanel');
+    var mainGrid = document.getElementById('mainGrid');
+    var resultCount = document.getElementById('resultCount');
+    var panelBody = document.getElementById('panelBody');
+
+    var searchTimer = null;
+    searchInput.addEventListener('input', function () {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(doSearch, 150);
+    });
+
+    function doSearch() {
+      var q = searchInput.value.trim().toLowerCase();
+      if (!q) { clearHighlight(); return; }
+      var matched = [];
+      allNodes.forEach(function (n) {
+        var emails = (n.dataset.emails || '').toLowerCase();
+        var emailList = emails.split(',').filter(Boolean);
+        var hit = false;
+        for (var i = 0; i < emailList.length; i++) {
+          if (emailList[i] === q || emailList[i].indexOf(q) !== -1) { hit = true; break; }
+        }
+        if (hit) {
+          n.classList.add('highlight'); n.classList.remove('dimmed'); matched.push(n);
+        } else {
+          n.classList.remove('highlight'); n.classList.add('dimmed');
+        }
+      });
+      allConns.forEach(function (c) { c.classList.add('dimmed'); });
+
+      sidePanel.classList.add('visible');
+      mainGrid.classList.remove('no-panel');
+
+      if (matched.length === 0) {
+        resultCount.textContent = '0';
+        panelBody.innerHTML = '<div class="no-hit">該当するフォルダはこのページ内にありません</div>';
+      } else {
+        resultCount.textContent = matched.length;
+        var ul = document.createElement('ul');
+        ul.id = 'resultList';
+        matched.forEach(function (n) {
+          var li = document.createElement('li');
+          var name = n.dataset.name;
+          var lvl = (n.getAttribute('class').match(/node-l(\d)/) || [])[1] || '?';
+          li.innerHTML = '<span class="lvl-badge">L' + lvl + '</span>' + DriveRender.escapeHtml(name);
+          li.addEventListener('click', function () { jumpTo(n); });
+          ul.appendChild(li);
+        });
+        panelBody.innerHTML = '';
+        panelBody.appendChild(ul);
+      }
+    }
+
+    function clearHighlight() {
+      allNodes.forEach(function (n) { n.classList.remove('highlight', 'dimmed', 'jump-target'); });
+      allConns.forEach(function (c) { c.classList.remove('dimmed'); });
+      sidePanel.classList.remove('visible');
+      mainGrid.classList.add('no-panel');
+      resultCount.textContent = '0';
+      panelBody.innerHTML = '';
+    }
+
+    window.clearSearch = function () {
+      searchInput.value = '';
+      clearHighlight();
+      searchInput.focus();
+    };
+
+    function jumpTo(node) {
+      var rect = node.querySelector('.node-rect');
+      var x = parseFloat(rect.getAttribute('x'));
+      var y = parseFloat(rect.getAttribute('y'));
+      var w = parseFloat(rect.getAttribute('width'));
+      var containerRect = svgContainer.getBoundingClientRect();
+      if (typeof svgContainer.scrollTo === 'function') {
+        svgContainer.scrollTo({
+          left: x - containerRect.width / 2 + w / 2,
+          top: y - containerRect.height / 2,
+          behavior: 'smooth',
+        });
+      } else {
+        svgContainer.scrollLeft = x - containerRect.width / 2 + w / 2;
+        svgContainer.scrollTop = y - containerRect.height / 2;
+      }
+      allNodes.forEach(function (n) { n.classList.remove('jump-target'); });
+      node.classList.add('jump-target');
+      setTimeout(function () { node.classList.remove('jump-target'); }, 2000);
+    }
+
+    // URL パラメータから自動検索 / フォルダハイライト
+    try {
+      var params2 = new URLSearchParams(window.location.search);
+      var emailParam = params2.get('email');
+      if (emailParam) { searchInput.value = emailParam; doSearch(); }
+
+      var highlightId = params2.get('highlight');
+      if (highlightId !== null) {
+        var targetNode = nodeMap[parseInt(highlightId, 10)];
+        if (targetNode) {
+          // 少し遅延させて確実にレイアウト後にスクロール
+          setTimeout(function () { jumpTo(targetNode); }, 100);
+        }
+      }
+    } catch (_) {}
+
+    // ローディング解除
+    document.getElementById('loadingOverlay').classList.add('hidden');
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+
+</body>
+</html>

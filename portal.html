@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>共有ドライブ ビジュアルポータル</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Noto+Sans+JP:wght@400;500;700;900&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text">DATA を読み込んでいます...</div>
+</div>
+
+<div class="container">
+  <div class="nav-tabs">
+    <a class="tab active" href="portal.html"><span style="font-size:14px">📁</span> 共有ドライブ一覧</a>
+    <a class="tab" href="search.html"><span style="font-size:14px">🔍</span> アクセス権限検索</a>
+  </div>
+  <div class="page-head">
+    <h1>共有ドライブ マップ一覧 <span class="year-badge">(2026)</span></h1>
+    <p>各共有ドライブ（階層1）のツリーマップを動的に表示します。行クリックで詳細マップへ移動し、ノードクリックで Drive URL が開きます。ホバーで権限ユーザーを確認できます。</p>
+  </div>
+  <div class="stats-row" id="statsRow">
+    <div class="stat"><span class="num" id="statDrives">—</span><span class="lbl">共有ドライブ</span></div>
+    <div class="stat"><span class="num" id="statNodes">—</span><span class="lbl">総ノード</span></div>
+    <div class="stat"><span class="num" id="statUsers">—</span><span class="lbl">ユニークユーザー</span></div>
+  </div>
+  <div class="filter-wrap">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input id="filterInput" type="text" list="driveDatalist" placeholder="ドライブ名・フォルダ名で検索..." autocomplete="off">
+    <datalist id="driveDatalist"></datalist>
+  </div>
+  <div class="drives-table">
+    <div class="drives-header">
+      <span>#</span>
+      <span>ノード数</span>
+      <span>共有ドライブ名</span>
+      <span>ユーザー数</span>
+      <span style="text-align:right">アクション</span>
+    </div>
+    <div class="drives-list" id="drivesList"></div>
+  </div>
+
+  <!-- フォルダ検索結果 (フォルダ名にヒットがあった時のみ表示) -->
+  <div class="folder-results" id="folderResults" style="display:none">
+    <div class="folder-results-head">
+      <span>マッチしたフォルダ</span>
+      <b id="folderHitCount">0</b>
+    </div>
+    <div class="folder-hits-list" id="folderHitsList"></div>
+  </div>
+  <div class="footer" id="footerInfo">Drive Visualizer · 2026</div>
+</div>
+
+<script src="data.js"></script>
+<script>
+(function () {
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+    });
+  }
+
+  function init() {
+    if (typeof window.DRIVE_DB === 'undefined') {
+      document.getElementById('loadingOverlay').innerHTML =
+        '<div style="color:#ff6b6b; font-family:monospace; padding:20px; text-align:center">' +
+        '<div style="font-size:18px; margin-bottom:8px">⚠ data.js を読み込めませんでした</div>' +
+        '<div style="color:#8a8a8a; font-size:13px">同じフォルダに data.js があるか確認してください</div></div>';
+      return;
+    }
+
+    var db = window.DRIVE_DB;
+    var drives = db.drives;
+    var meta = db.meta;
+
+    document.getElementById('statDrives').textContent = meta.drive_count.toLocaleString();
+    document.getElementById('statNodes').textContent = meta.folder_count.toLocaleString();
+    document.getElementById('statUsers').textContent = meta.user_count.toLocaleString();
+    document.getElementById('footerInfo').textContent =
+      'Drive Visualizer · 2026 · ' +
+      meta.drive_count + ' drives · ' +
+      meta.folder_count.toLocaleString() + ' nodes · ' +
+      meta.user_count + ' users · 生成 ' + (meta.generated_at || '');
+
+    // ノード数で降順ソート (見た目を index.html と揃える)
+    var sortedDrives = drives.slice().sort(function (a, b) {
+      return b.folder_count - a.folder_count;
+    });
+
+    // datalist にドライブ名候補を入れる
+    var dlHtml = sortedDrives.map(function (d) {
+      return '<option value="' + escapeHtml(d.name) + '">';
+    }).join('');
+    document.getElementById('driveDatalist').innerHTML = dlHtml;
+
+    var drivesList = document.getElementById('drivesList');
+    var folderResults = document.getElementById('folderResults');
+    var folderHitsList = document.getElementById('folderHitsList');
+    var folderHitCount = document.getElementById('folderHitCount');
+
+    // フォルダ名のフルパスを構築 (検索表示用)
+    function buildFolderPath(drive, folder) {
+      var parts = [];
+      var cur = folder;
+      while (cur) {
+        parts.unshift(cur.name);
+        if (cur.parent === null || cur.parent === undefined) break;
+        cur = drive.folders[cur.parent];
+      }
+      return parts.join(' / ');
+    }
+
+    // クエリの位置をハイライトするHTML生成
+    function highlightMatch(text, query) {
+      if (!query) return escapeHtml(text);
+      var lower = text.toLowerCase();
+      var qLower = query.toLowerCase();
+      var idx = lower.indexOf(qLower);
+      if (idx === -1) return escapeHtml(text);
+      return escapeHtml(text.substring(0, idx)) +
+        '<span class="match">' + escapeHtml(text.substring(idx, idx + query.length)) + '</span>' +
+        escapeHtml(text.substring(idx + query.length));
+    }
+
+    var FOLDER_HIT_LIMIT = 100;  // 表示上限
+
+    function renderDrives(filter) {
+      filter = filter || '';
+      var q = filter.toLowerCase().trim();
+      var visibleCount = 0;
+
+      // ドライブ名にマッチする ID 集合 (マッチ時はその行を表示)
+      var driveNameMatch = {};
+      sortedDrives.forEach(function (d) {
+        if (!q || d.name.toLowerCase().indexOf(q) !== -1) driveNameMatch[d.id] = true;
+      });
+
+      // フォルダ名検索 (q が2文字以上の時のみ実行 - 軽量化)
+      var folderHits = [];
+      var driveIdsWithFolderHit = {};
+      if (q.length >= 2) {
+        for (var i = 0; i < drives.length; i++) {
+          var d = drives[i];
+          for (var j = 0; j < d.folders.length; j++) {
+            var f = d.folders[j];
+            if (f.name.toLowerCase().indexOf(q) !== -1) {
+              folderHits.push({ drive: d, folder: f });
+              driveIdsWithFolderHit[d.id] = true;
+              if (folderHits.length >= FOLDER_HIT_LIMIT + 1) break;  // 上限+1まで集めて切る
+            }
+          }
+          if (folderHits.length >= FOLDER_HIT_LIMIT + 1) break;
+        }
+      }
+
+      // ドライブ行のレンダリング: ドライブ名マッチ OR フォルダ名でヒットがあるドライブ
+      var html = sortedDrives.map(function (d, i) {
+        var isMatch = !q || driveNameMatch[d.id] || driveIdsWithFolderHit[d.id];
+        if (isMatch) visibleCount++;
+        var hiddenCls = isMatch ? '' : ' hidden';
+        return '<a class="row' + hiddenCls + '" href="drive.html?id=' + d.id + '">' +
+          '<span class="idx">' + String(i + 1).padStart(3, '0') + '</span>' +
+          '<span class="count">' + d.folder_count.toLocaleString() + '</span>' +
+          '<span class="name">' + escapeHtml(d.name) + '</span>' +
+          '<span class="users">' + d.user_count + ' users</span>' +
+          '<span class="meta">OPEN →</span>' +
+          '</a>';
+      }).join('');
+      drivesList.innerHTML = html + (visibleCount === 0 ? '<div class="empty">該当するドライブが見つかりません</div>' : '');
+
+      // フォルダ検索結果の表示
+      if (q.length >= 2 && folderHits.length > 0) {
+        var truncated = folderHits.length > FOLDER_HIT_LIMIT;
+        var displayHits = folderHits.slice(0, FOLDER_HIT_LIMIT);
+        folderHitCount.textContent = truncated ? (FOLDER_HIT_LIMIT + '+ hits') : (folderHits.length + ' hits');
+
+        var hitsHtml = displayHits.map(function (h) {
+          var path = buildFolderPath(h.drive, h.folder);
+          var parts = path.split(' / ');
+          var head = parts.slice(0, -1);
+          var leaf = parts[parts.length - 1];
+          var pathHtml = '<span class="drive">' + escapeHtml(h.drive.name) + '</span>';
+          // headの先頭が drive.name と同じならスキップ (重複表示回避)
+          var startIdx = (head[0] === h.drive.name) ? 1 : 0;
+          for (var k = startIdx; k < head.length; k++) {
+            pathHtml += '<span class="sep">/</span>' + escapeHtml(head[k]);
+          }
+          pathHtml += '<span class="sep">/</span><span class="leaf">' + highlightMatch(leaf, filter.trim()) + '</span>';
+
+          var url = 'drive.html?id=' + h.drive.id + '&highlight=' + h.folder.id;
+          return '<a class="folder-hit-row" href="' + url + '">' +
+            '<span class="lvl">L' + h.folder.level + '</span>' +
+            '<span class="path">' + pathHtml + '</span>' +
+            '<span class="action">JUMP →</span>' +
+            '</a>';
+        }).join('');
+
+        if (truncated) {
+          hitsHtml += '<div class="folder-hits-more">表示は ' + FOLDER_HIT_LIMIT + ' 件まで。さらに絞り込んでください。</div>';
+        }
+        folderHitsList.innerHTML = hitsHtml;
+        folderResults.style.display = 'block';
+      } else {
+        folderResults.style.display = 'none';
+        folderHitsList.innerHTML = '';
+      }
+    }
+
+    var filterTimer = null;
+    document.getElementById('filterInput').addEventListener('input', function (e) {
+      clearTimeout(filterTimer);
+      var val = e.target.value;
+      // 短いクエリは即時、長いクエリはdebounce (フォルダ検索が重いため)
+      filterTimer = setTimeout(function () { renderDrives(val); }, val.trim().length >= 2 ? 180 : 0);
+    });
+    renderDrives();
+
+    document.getElementById('loadingOverlay').classList.add('hidden');
+  }
+
+  // data.js のロード完了を待つ (script タグの順序で同期的に来るはずだが念のため)
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+
+</body>
+</html>

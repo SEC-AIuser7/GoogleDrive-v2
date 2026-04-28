@@ -1,0 +1,14 @@
+{
+  "_comment_1": "データソース設定ファイル。source の値で Excel / Sheets を切替えます。",
+  "_comment_2": "GitHub Actions 環境では、環境変数 DATA_SOURCE / SHEETS_ID / GOOGLE_CREDENTIALS_JSON で上書きされます。",
+
+  "source": "sheets",
+
+  "_sheets_settings_note": "以下は source が 'sheets' の場合のみ使用",
+  "sheets_id": "ここにスプレッドシートIDを入れる (URLの /d/ と /edit の間の文字列)",
+  "sheets_tab": "",
+  "_sheets_tab_note": "空文字にすると '出力結果_*' で始まる最新タブを自動選択",
+
+  "credentials_file": "credentials.json",
+  "_credentials_note": "ローカル実行時のみ使用。GitHub Actions では環境変数から読むので不要。"
+}
