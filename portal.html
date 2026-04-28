@@ -79,6 +79,48 @@
     var drives = db.drives;
     var meta = db.meta;
 
+    // === ロック関連 ===
+    var lockedSet = {};
+    (meta.locked_drives || []).forEach(function (n) { lockedSet[n] = true; });
+    var unlockPassword = meta.unlock_password || '';
+    var lockEnabled = !!unlockPassword && Object.keys(lockedSet).length > 0;
+
+    function isUnlocked() {
+      try { return sessionStorage.getItem('drive_visualizer_unlocked') === '1'; }
+      catch (_) { return false; }
+    }
+    function setUnlocked() {
+      try { sessionStorage.setItem('drive_visualizer_unlocked', '1'); } catch (_) {}
+    }
+    function isDriveLocked(drive) {
+      if (!lockEnabled) return false;
+      if (!lockedSet[drive.name]) return false;
+      return !isUnlocked();
+    }
+    // URL クエリ ?unlock=xxx で自動解錠
+    try {
+      var p = new URLSearchParams(window.location.search);
+      if (p.get('unlock') && p.get('unlock') === unlockPassword) {
+        setUnlocked();
+      }
+    } catch (_) {}
+
+    // パスワードダイアログ
+    function promptPassword(targetDriveName, callback) {
+      var input = window.prompt(
+        '🔒 「' + targetDriveName + '」は鍵付きドライブです。\nパスワードを入力してください:',
+        ''
+      );
+      if (input === null) return; // キャンセル
+      if (input === unlockPassword) {
+        setUnlocked();
+        if (callback) callback();
+      } else {
+        alert('パスワードが違います。');
+      }
+    }
+    // ===
+
     document.getElementById('statDrives').textContent = meta.drive_count.toLocaleString();
     document.getElementById('statNodes').textContent = meta.folder_count.toLocaleString();
     document.getElementById('statUsers').textContent = meta.user_count.toLocaleString();
@@ -142,17 +184,19 @@
       });
 
       // フォルダ名検索 (q が2文字以上の時のみ実行 - 軽量化)
+      // ロック中ドライブは検索対象外
       var folderHits = [];
       var driveIdsWithFolderHit = {};
       if (q.length >= 2) {
         for (var i = 0; i < drives.length; i++) {
           var d = drives[i];
+          if (isDriveLocked(d)) continue;  // ロック中はスキップ
           for (var j = 0; j < d.folders.length; j++) {
             var f = d.folders[j];
             if (f.name.toLowerCase().indexOf(q) !== -1) {
               folderHits.push({ drive: d, folder: f });
               driveIdsWithFolderHit[d.id] = true;
-              if (folderHits.length >= FOLDER_HIT_LIMIT + 1) break;  // 上限+1まで集めて切る
+              if (folderHits.length >= FOLDER_HIT_LIMIT + 1) break;
             }
           }
           if (folderHits.length >= FOLDER_HIT_LIMIT + 1) break;
@@ -164,6 +208,17 @@
         var isMatch = !q || driveNameMatch[d.id] || driveIdsWithFolderHit[d.id];
         if (isMatch) visibleCount++;
         var hiddenCls = isMatch ? '' : ' hidden';
+        var locked = isDriveLocked(d);
+        if (locked) {
+          // ロック中: <a> ではなく <div> + クリックでパスワード
+          return '<div class="row locked-row' + hiddenCls + '" data-drive-id="' + d.id + '" data-drive-name="' + escapeHtml(d.name) + '">' +
+            '<span class="idx">' + String(i + 1).padStart(3, '0') + '</span>' +
+            '<span class="count">' + d.folder_count.toLocaleString() + '</span>' +
+            '<span class="name">🔒 ' + escapeHtml(d.name) + ' <span style="color:var(--text-faint); font-size:11px; font-family:monospace">[鍵付き]</span></span>' +
+            '<span class="users">' + d.user_count + ' users</span>' +
+            '<span class="meta">UNLOCK 🔑</span>' +
+            '</div>';
+        }
         return '<a class="row' + hiddenCls + '" href="drive.html?id=' + d.id + '">' +
           '<span class="idx">' + String(i + 1).padStart(3, '0') + '</span>' +
           '<span class="count">' + d.folder_count.toLocaleString() + '</span>' +
@@ -173,6 +228,18 @@
           '</a>';
       }).join('');
       drivesList.innerHTML = html + (visibleCount === 0 ? '<div class="empty">該当するドライブが見つかりません</div>' : '');
+
+      // ロック行クリックでパスワードダイアログ
+      drivesList.querySelectorAll('.locked-row').forEach(function (row) {
+        row.addEventListener('click', function () {
+          var name = row.dataset.driveName;
+          var id = row.dataset.driveId;
+          promptPassword(name, function () {
+            // 解錠成功 → drive.html に遷移
+            window.location.href = 'drive.html?id=' + id;
+          });
+        });
+      });
 
       // フォルダ検索結果の表示
       if (q.length >= 2 && folderHits.length > 0) {

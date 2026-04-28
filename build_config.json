@@ -7,8 +7,14 @@
   "_sheets_settings_note": "以下は source が 'sheets' の場合のみ使用",
   "sheets_id": "ここにスプレッドシートIDを入れる (URLの /d/ と /edit の間の文字列)",
   "sheets_tab": "",
-  "_sheets_tab_note": "空文字にすると '出力結果_*' で始まる最新タブを自動選択",
+  "_sheets_tab_note": "空文字にすると '出力結果_*' または '全共有ドライブ抽出_*' で始まる最新タブを自動選択",
 
   "credentials_file": "credentials.json",
-  "_credentials_note": "ローカル実行時のみ使用。GitHub Actions では環境変数から読むので不要。"
+  "_credentials_note": "ローカル実行時のみ使用。GitHub Actions では環境変数から読むので不要。",
+
+  "_locked_drives_note": "ロック対象のドライブ名リスト (一覧では🔒鍵付き表示、解錠時のみ閲覧可能)",
+  "locked_drives": ["人事フォルダ"],
+
+  "_unlock_password_note": "解錠パスワード。空文字にするとロック機能が無効化される。注意: data.jsに含まれるためセキュリティではなく目隠しレベル。",
+  "unlock_password": "jinji2026"
 }

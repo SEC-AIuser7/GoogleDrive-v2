@@ -47,7 +47,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EXCEL_FILE = os.path.join(SCRIPT_DIR, "共有ドライブフォルダ構成CSV.xlsx")
 CONFIG_FILE = os.path.join(SCRIPT_DIR, "build_config.json")
 OUTPUT_FILE = os.path.join(SCRIPT_DIR, "data.js")
-SHEET_PREFIX = "全共有ドライブ抽出_"  # 全共有ドライブ抽出_YYYYMMDD_HHMMSS のシートを自動検出
+SHEET_PREFIX = "出力結果_"  # 出力結果_YYYYMMDD_HHMMSS のシートを自動検出
 
 # レイアウト定数 (drive.html の SVG 描画と一致させること)
 NODE_HEIGHT = 22
@@ -83,7 +83,7 @@ def load_config():
 # データ読み込み: Excel / Sheets を抽象化
 # ============================================================
 def find_target_sheet_xls(excel_path):
-    """Excel から 全共有ドライブ抽出__YYYYMMDD_HHMMSS シートを自動検出"""
+    """Excel から 出力結果_YYYYMMDD_HHMMSS シートを自動検出"""
     xls = pd.ExcelFile(excel_path)
     candidates = [s for s in xls.sheet_names if s.startswith(SHEET_PREFIX)]
     if not candidates:
@@ -158,7 +158,7 @@ def load_from_sheets(cfg):
     gc = gspread.authorize(creds)
     sh = gc.open_by_key(sheets_id)
 
-    # タブ名指定があればそれ、なければ "全共有ドライブ抽出__*" を自動検出
+    # タブ名指定があればそれ、なければ "出力結果_*" を自動検出
     tab_name = os.environ.get("SHEETS_TAB") or cfg.get("sheets_tab")
     if not tab_name:
         all_titles = [ws.title for ws in sh.worksheets()]
@@ -479,16 +479,41 @@ def build_drives(df):
     grouped = df.groupby(drive_name_col, sort=False)
 
     drive_index = 0
+    skipped_empty_name = 0
+    placeholder_drives = []  # 階層空っぽのため自動補完したドライブ
     for drive_name, group in grouped:
         if not drive_name or str(drive_name).strip() == "":
+            skipped_empty_name += 1
             continue
         drive_index += 1
         drive_id = f"{drive_index:03d}"
 
         folders = build_folders_for_drive(group)
         if not folders:
-            print(f"  [警告] {drive_name}: 有効なフォルダなし、スキップ")
-            continue
+            # 階層が全部空でも、ドライブ自体は存在するので「ルートのみのプレースホルダー」を作る
+            # 全行のフォルダURL/権限を集約してルートに設定
+            url = ""
+            users_set = []
+            for _, row in group.iterrows():
+                u = str(row.get("フォルダURL", "")).strip()
+                if u and not url:
+                    url = u
+                row_users = parse_users_from_row(row)
+                for ru in row_users:
+                    if ru not in users_set:
+                        users_set.append(ru)
+
+            folders = [{
+                "id": 0,
+                "name": str(drive_name),
+                "level": 1,
+                "parent": None,
+                "url": url,
+                "users": users_set,
+            }]
+            compute_layout(folders)
+            placeholder_drives.append(str(drive_name))
+            print(f"  [情報] {drive_name}: 階層情報なし → ルートのみで登録")
 
         svg_height = compute_layout(folders)
 
@@ -552,7 +577,7 @@ def parse_user_entry(entry):
 # ============================================================
 # data.js 出力
 # ============================================================
-def write_data_js(drives, user_index, sheet_name, output_path):
+def write_data_js(drives, user_index, sheet_name, output_path, locked_drives=None, unlock_password=None):
     # 全体統計
     total_folders = sum(d["folder_count"] for d in drives)
     all_users = set(user_index.keys())
@@ -564,6 +589,8 @@ def write_data_js(drives, user_index, sheet_name, output_path):
             "drive_count": len(drives),
             "folder_count": total_folders,
             "user_count": len(all_users),
+            "locked_drives": locked_drives or [],
+            "unlock_password": unlock_password or "",
         },
         "drives": drives,
         "users": user_index,
@@ -622,7 +649,15 @@ def main():
         print(f"      [警告] どのフォルダにもユーザー情報が見つかりませんでした")
 
     print(f"\n[4/4] data.js 出力...")
-    size = write_data_js(drives, user_index, sheet_name, OUTPUT_FILE)
+    # ロック設定の読み込み (build_config.json からアクセス制限ドライブを取得)
+    cfg = load_config()
+    locked_drives = cfg.get("locked_drives", []) or []
+    unlock_password = cfg.get("unlock_password", "") or ""
+    if locked_drives:
+        print(f"      ロック対象ドライブ: {locked_drives}")
+    size = write_data_js(drives, user_index, sheet_name, OUTPUT_FILE,
+                         locked_drives=locked_drives,
+                         unlock_password=unlock_password)
     print(f"      出力: {OUTPUT_FILE}")
     print(f"      サイズ: {size:,} 文字 ({size / 1024 / 1024:.2f} MB)")
 

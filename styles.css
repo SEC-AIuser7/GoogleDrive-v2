@@ -87,6 +87,27 @@ body {
 .drives-list .row:hover { background: var(--bg-2); }
 .drives-list .row:last-child { border-bottom: none; }
 .drives-list .row.hidden { display: none; }
+
+/* ロック対象ドライブ行 */
+.drives-list .row.locked-row {
+  cursor: pointer;
+  opacity: 0.75;
+  background: linear-gradient(90deg, rgba(255,181,71,0.04) 0%, transparent 60%);
+}
+.drives-list .row.locked-row:hover {
+  background: linear-gradient(90deg, rgba(255,181,71,0.12) 0%, var(--bg-2) 60%);
+  opacity: 1;
+}
+.drives-list .row.locked-row .name {
+  color: var(--text-dim);
+}
+.drives-list .row.locked-row .meta {
+  color: var(--highlight) !important;
+  font-weight: 600;
+}
+.drives-list .row.locked-row .users {
+  color: var(--text-faint) !important;
+}
 .drives-list .row .idx { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-faint); }
 .drives-list .row .count { font-family: 'Space Grotesk', sans-serif; font-size: 18px; font-weight: 600; color: var(--accent); }
 .drives-list .row .name { font-size: 15px; color: var(--text); font-weight: 500; word-break: break-all; }

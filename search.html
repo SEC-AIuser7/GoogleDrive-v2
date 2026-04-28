@@ -84,12 +84,39 @@
       meta.folder_count.toLocaleString() + ' nodes · ' +
       meta.user_count + ' users · 生成 ' + (meta.generated_at || '');
 
+    // === ロック設定 ===
+    var lockedSet = {};
+    (meta.locked_drives || []).forEach(function (n) { lockedSet[n] = true; });
+    var unlockPassword = meta.unlock_password || '';
+    var lockEnabled = !!unlockPassword && Object.keys(lockedSet).length > 0;
+
+    function isUnlocked() {
+      try { return sessionStorage.getItem('drive_visualizer_unlocked') === '1'; }
+      catch (_) { return false; }
+    }
+    function setUnlocked() {
+      try { sessionStorage.setItem('drive_visualizer_unlocked', '1'); } catch (_) {}
+    }
+    // URL ?unlock=xxx で自動解錠
+    try {
+      var pUnlock = new URLSearchParams(window.location.search);
+      if (pUnlock.get('unlock') && pUnlock.get('unlock') === unlockPassword) {
+        setUnlocked();
+      }
+    } catch (_) {}
+    function isDriveLocked(driveName) {
+      if (!lockEnabled) return false;
+      if (!lockedSet[driveName]) return false;
+      return !isUnlocked();
+    }
+    // ===
+
     // ドライブIDで早く引けるマップ
     var driveById = {};
     db.drives.forEach(function (d) { driveById[d.id] = d; });
 
     // ユーザーのアクセス情報を整形:
-    // userEmail -> [{driveId, driveName, folders: [{path, role, url}, ...]}]
+    // userEmail -> [{driveId, driveName, folders: [{path, role, url}, ...], locked}]
     var USER_ACCESS = {};
     Object.keys(db.users).forEach(function (email) {
       var entries = db.users[email];
@@ -99,6 +126,8 @@
         if (!drive) return;
         var folder = drive.folders[entry.folder_id];
         if (!folder) return;
+        // ロック中ドライブはユーザーアクセス情報からも除外
+        if (isDriveLocked(drive.name)) return;
         var path = buildPath(drive, folder);
         if (!byDrive[entry.drive_id]) {
           byDrive[entry.drive_id] = { driveId: entry.drive_id, driveName: drive.name, folders: [] };

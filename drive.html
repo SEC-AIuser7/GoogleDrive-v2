@@ -98,6 +98,56 @@
       return;
     }
 
+    // === ロックチェック ===
+    var meta = window.DRIVE_DB.meta || {};
+    var lockedSet = {};
+    (meta.locked_drives || []).forEach(function (n) { lockedSet[n] = true; });
+    var unlockPassword = meta.unlock_password || '';
+    var lockEnabled = !!unlockPassword && Object.keys(lockedSet).length > 0;
+
+    function isUnlocked() {
+      try { return sessionStorage.getItem('drive_visualizer_unlocked') === '1'; }
+      catch (_) { return false; }
+    }
+    function setUnlocked() {
+      try { sessionStorage.setItem('drive_visualizer_unlocked', '1'); } catch (_) {}
+    }
+    // URL クエリ ?unlock=xxx で自動解錠
+    try {
+      var p = new URLSearchParams(window.location.search);
+      if (p.get('unlock') && p.get('unlock') === unlockPassword) {
+        setUnlocked();
+      }
+    } catch (_) {}
+
+    // このドライブがロック対象 + 未解錠 ならパスワード要求
+    if (lockEnabled && lockedSet[drive.name] && !isUnlocked()) {
+      var attempts = 0;
+      var unlockSucceeded = false;
+      while (attempts < 3) {
+        var input = window.prompt(
+          '🔒 「' + drive.name + '」は鍵付きドライブです。\nパスワードを入力してください:',
+          ''
+        );
+        if (input === null) break; // キャンセル
+        if (input === unlockPassword) {
+          setUnlocked();
+          unlockSucceeded = true;
+          break;
+        }
+        attempts++;
+        alert('パスワードが違います。(残り ' + (3 - attempts) + ' 回)');
+      }
+      if (!unlockSucceeded) {
+        showError(
+          '🔒 アクセスが許可されませんでした',
+          '「' + drive.name + '」は鍵付きドライブです。閲覧には正しいパスワードが必要です。'
+        );
+        return;
+      }
+    }
+    // ===
+
     // タイトルとメタ情報
     document.title = drive.name + ' — Drive Map';
     document.getElementById('driveTitle').textContent = drive.name;
