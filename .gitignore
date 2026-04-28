@@ -1,0 +1,27 @@
+# Google サービスアカウント認証情報 (絶対にcommitしない)
+credentials.json
+*-credentials.json
+service-account*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# エディタ
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node.js
+node_modules/
+package.json
+package-lock.json
