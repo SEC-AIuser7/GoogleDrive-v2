@@ -1,8 +1,9 @@
-name: Rebuild data.js from Google Sheets
+name: Rebuild data.js from CSV
 
 on:
   schedule:
-    - cron: '0 0 * * *'
+    # daily_crawl.yml の後に動くよう調整 (UTC 17:00 にクロール開始 → UTC 20:00 にビルド)
+    - cron: '0 20 * * *'   # UTC 20:00 = JST 翌05:00
   workflow_dispatch:
   push:
     branches: [main]
@@ -29,13 +30,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pandas openpyxl gspread google-auth
+          pip install pandas openpyxl google-api-python-client google-auth
 
-      - name: Build data.js from Google Sheets
+      - name: Build data.js from CSV
         env:
-          DATA_SOURCE: sheets
-          SHEETS_ID: ${{ secrets.SHEETS_ID }}
+          DATA_SOURCE: csv
+          CSV_DRIVE_FILE_ID: ${{ secrets.CSV_DRIVE_FILE_ID }}
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+          SUBJECT_EMAIL: ${{ secrets.SUBJECT_EMAIL }}
         run: |
           python build.py
 
