@@ -1,20 +1,14 @@
 name: 共有ドライブ フォルダ構造 日次抽出
 
 on:
-  # ── 定期実行: 毎日 JST 02:00 (UTC 17:00 前日) ──
-  # GAS での取得が不要になったため、単独で毎日実行
   schedule:
     - cron: '0 17 * * *'   # UTC 17:00 = JST 翌02:00
-
-  # ── 手動実行（テスト・緊急再実行用） ──
   workflow_dispatch:
     inputs:
       output_folder_id:
-        description: '出力先フォルダID（空白で設定値を使用）'
+        description: '出力先フォルダID（空白でSecrets設定値を使用）'
         required: false
         default: ''
-
-  # ── main ブランチへの push でも実行（スクリプト修正の動作確認） ──
   push:
     branches: [main]
     paths:
@@ -26,50 +20,33 @@ jobs:
   crawl:
     name: Drive クロール & CSV 出力
     runs-on: ubuntu-latest
-    timeout-minutes: 350   # 最大 5h50m（Actions の上限 6h に余裕を持たせる）
+    timeout-minutes: 350
 
     steps:
-      # -------------------------------------------------------- #
-      # 1. リポジトリをチェックアウト
-      # -------------------------------------------------------- #
       - name: Checkout
         uses: actions/checkout@v4
 
-      # -------------------------------------------------------- #
-      # 2. Python セットアップ
-      # -------------------------------------------------------- #
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      # -------------------------------------------------------- #
-      # 3. 依存パッケージインストール
-      # -------------------------------------------------------- #
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # -------------------------------------------------------- #
-      # 4. メインスクリプト実行
-      # -------------------------------------------------------- #
       - name: Run crawler
         env:
-          # サービスアカウントの JSON キー（GitHub Secrets から注入）
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
-          # 出力先フォルダID（手動実行時に上書き可能）
           OUTPUT_FOLDER_ID: ${{ inputs.output_folder_id || secrets.OUTPUT_FOLDER_ID || '1ZqjDtUgYzueDU2_I0FJifiNPV1QFdnBF' }}
+          SUBJECT_EMAIL: ${{ secrets.SUBJECT_EMAIL }}
         run: |
           python main.py
 
-      # -------------------------------------------------------- #
-      # 5. CSV を Actions Artifact として保存（30日間保持）
-      #    ※ Drive への書き込みが失敗した場合のバックアップ
-      # -------------------------------------------------------- #
       - name: Upload CSV as artifact
-        if: always()   # エラーが出ても artifact は保存する
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: shared-drive-structure-${{ github.run_id }}
@@ -77,13 +54,8 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      # -------------------------------------------------------- #
-      # 6. 完了通知（失敗時のみ）
-      #    ※ Slack 等に通知したい場合はここを拡張
-      # -------------------------------------------------------- #
       - name: Notify on failure
         if: failure()
         run: |
-          echo "::error::クロールが失敗しました。Artifacts のログを確認してください。"
+          echo "::error::クロールが失敗しました。ログを確認してください。"
           echo "実行ID: ${{ github.run_id }}"
-          echo "ログURL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
