@@ -158,17 +158,16 @@ def api_call_with_retry(func, *args, **kwargs):
 # ================================================================== #
 def list_shared_drives(service):
     """
-    組織内の全共有ドライブを取得（ページネーション対応）。
-    useDomainAdminAccess=True でドメイン全体を対象にする。
+    認証ユーザー（SUBJECT_EMAIL）が参加している共有ドライブだけ取得。
+    管理者権限は不要。
     """
     drives     = []
     page_token = None
 
     while True:
         params = {
-            "pageSize":             100,
-            "fields":               "nextPageToken, drives(id, name)",
-            "useDomainAdminAccess": True,
+            "pageSize": 100,
+            "fields":   "nextPageToken, drives(id, name)",
         }
         if page_token:
             params["pageToken"] = page_token
@@ -181,7 +180,7 @@ def list_shared_drives(service):
         if not page_token:
             break
 
-    log.info(f"共有ドライブ総数: {len(drives)} 件")
+    log.info(f"共有ドライブ総数: {len(drives)} 件（{SUBJECT_EMAIL} がアクセス可能なもの）")
     return drives
 
 
@@ -191,36 +190,26 @@ def list_shared_drives(service):
 def get_permissions(service, folder_id):
     """
     フォルダの権限一覧を "email(role), ..." 形式の文字列で返す。
-    useDomainAdminAccess=True を試行 → 失敗したら通常権限で再取得。
+    管理者権限なしで通常取得のみ。
     """
-    def _fetch(use_admin):
-        params = {
-            "fileId":            folder_id,
-            "fields":            "permissions(emailAddress,displayName,role,type)",
-            "supportsAllDrives": True,
-        }
-        if use_admin:
-            params["useDomainAdminAccess"] = True
-        return api_call_with_retry(service.permissions().list, **params)
-
-    for use_admin in (True, False):
-        try:
-            resp  = _fetch(use_admin)
-            perms = resp.get("permissions", [])
-            parts = []
-            for p in perms:
-                identity = p.get("emailAddress") or p.get("displayName") or p.get("type", "")
-                role     = p.get("role", "")
-                if identity:
-                    parts.append(f"{identity}({role})")
-            return ", ".join(parts)
-        except HttpError as e:
-            if e.resp.status in (403, 404) and use_admin:
-                continue
-            log.warning(f"権限取得失敗 [{folder_id}]: {e}")
-            return "権限取得不可"
-    return "権限取得不可"
-
+    try:
+        resp = api_call_with_retry(
+            service.permissions().list,
+            fileId=folder_id,
+            fields="permissions(emailAddress,displayName,role,type)",
+            supportsAllDrives=True,
+        )
+        perms = resp.get("permissions", [])
+        parts = []
+        for p in perms:
+            identity = p.get("emailAddress") or p.get("displayName") or p.get("type", "")
+            role     = p.get("role", "")
+            if identity:
+                parts.append(f"{identity}({role})")
+        return ", ".join(parts)
+    except HttpError as e:
+        log.warning(f"権限取得失敗 [{folder_id}]: {e}")
+        return "権限取得不可"
 
 # ================================================================== #
 # 子フォルダ一覧取得
