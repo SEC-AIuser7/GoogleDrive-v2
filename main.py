@@ -140,7 +140,6 @@ def list_shared_drives(service):
         params = {
             "pageSize": 100,
             "fields":   "nextPageToken, drives(id, name)",
-            "useDomainAdminAccess": True,
         }
         if page_token:
             params["pageToken"] = page_token
