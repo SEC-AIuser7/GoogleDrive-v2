@@ -134,11 +134,17 @@ def _download_csv_from_drive(file_id, cfg):
         print("    pip install google-api-python-client google-auth")
         raise
 
+    # SUBJECT_EMAIL（ドメイン全体の委任で使うユーザー）
+    subject_email = os.environ.get("SUBJECT_EMAIL", "")
+
     cred_env = os.environ.get("GOOGLE_CREDENTIALS_JSON")
     scopes   = ["https://www.googleapis.com/auth/drive.readonly"]
     if cred_env:
         cred_info = json.loads(cred_env)
-        creds = Credentials.from_service_account_info(cred_info, scopes=scopes)
+        creds = Credentials.from_service_account_info(
+            cred_info, scopes=scopes,
+            subject=subject_email if subject_email else None,
+        )
     else:
         cred_file = cfg.get("credentials_file", "credentials.json")
         if not os.path.isabs(cred_file):
@@ -148,7 +154,13 @@ def _download_csv_from_drive(file_id, cfg):
                 f"認証ファイルが見つかりません: {cred_file}\n"
                 "  GitHub Actions では環境変数 GOOGLE_CREDENTIALS_JSON を設定してください。"
             )
-        creds = Credentials.from_service_account_file(cred_file, scopes=scopes)
+        creds = Credentials.from_service_account_file(
+            cred_file, scopes=scopes,
+            subject=subject_email if subject_email else None,
+        )
+
+    if subject_email:
+        print(f"  委任ユーザー: {subject_email}")
 
     import io
     service  = g_build("drive", "v3", credentials=creds)
