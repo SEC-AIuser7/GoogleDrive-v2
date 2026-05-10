@@ -241,7 +241,7 @@ def _download_csv_from_drive(file_id, cfg):
     subject_email = os.environ.get("SUBJECT_EMAIL", "")
 
     cred_env = os.environ.get("GOOGLE_CREDENTIALS_JSON")
-    scopes   = ["https://www.googleapis.com/auth/drive.readonly"]
+    scopes   = ["https://www.googleapis.com/auth/drive"]
     if cred_env:
         cred_info = json.loads(cred_env)
         creds = Credentials.from_service_account_info(
@@ -316,7 +316,7 @@ def load_from_sheets(cfg):
     cred_env = os.environ.get("GOOGLE_CREDENTIALS_JSON")
     scopes   = [
         "https://www.googleapis.com/auth/spreadsheets.readonly",
-        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/drive",
     ]
     if cred_env:
         from google.oauth2.service_account import Credentials
