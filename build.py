@@ -388,16 +388,28 @@ def normalize_role(role):
 
 def parse_permission_cell(cell):
     """
-    "a@x.com(writer) / b@y.com(reader)" などを解析してリストを返す。
-    区切り: " / " > 改行 > "/"
+    権限セルを解析してユーザーリストを返す。
+    対応する区切り文字（優先順位順）:
+      - "|"   (パイプ)
+      - " / " (スペース+スラッシュ、GAS旧形式)
+      - 改行
+      - ", "  (カンマ+スペース、main.py出力形式)
+      - "/"   (スラッシュ単独)
     """
     s = str(cell).strip()
     if not s:
         return []
-    if " / " in s:
+
+    if "|" in s:
+        parts = re.split(r"\s*\|\s*", s)
+    elif " / " in s:
         parts = s.split(" / ")
     elif "\n" in s:
         parts = s.split("\n")
+    elif ", " in s:
+        # main.py 出力形式: "user1@x.com(writer), user2@y.com(reader)"
+        # メールアドレスやrole内にはカンマが入らないので安全に分割可能
+        parts = re.split(r",\s+", s)
     elif "/" in s:
         parts = s.split("/")
     else:
