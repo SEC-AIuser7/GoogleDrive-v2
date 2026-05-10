@@ -3,11 +3,16 @@
 
   "source": "csv",
 
-  "_csv_note": "1Amap-W1PM349O5RaovPpKh7unbZmf1vm",
+  "_csv_note": "main.pyが出力したCSVファイルの設定",
   "csv_file_path": "",
   "_csv_file_path_note": "ローカル実行時のみ。CSVファイルのパスを直接指定する場合に使用。",
-  "csv_drive_file_id": "1Amap-W1PM349O5RaovPpKh7unbZmf1vm",
-  "_csv_drive_file_id_note": "GASが書き出すCSVのGoogle DriveファイルID。URLの /d/ と /edit の間の文字列。GitHub Actionsではシークレット CSV_DRIVE_FILE_ID で上書き可能。",
+
+  "csv_drive_file_id": "",
+  "_csv_drive_file_id_note": "CSVファイルのGoogle DriveファイルIDを直接指定する場合に使用。空白なら下のoutput_folder_idから自動検索。",
+
+  "output_folder_id": "1ZqjDtUgYzueDU2_I0FJifiNPV1QFdnBF",
+  "csv_file_name": "shared_drive_structure.csv",
+  "_output_folder_id_note": "main.pyのCSV出力先フォルダID。csv_file_name のファイルを自動検索する。GitHub Secretsの OUTPUT_FOLDER_ID で上書き可能。",
 
   "_sheets_note": "source: sheets の場合のみ使用",
   "sheets_id": "",
