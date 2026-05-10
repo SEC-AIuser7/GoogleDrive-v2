@@ -389,44 +389,63 @@ def normalize_role(role):
 def parse_permission_cell(cell):
     """
     権限セルを解析してユーザーリストを返す。
-    対応する区切り文字（優先順位順）:
-      - "|"   (パイプ)
-      - " / " (スペース+スラッシュ、GAS旧形式)
-      - 改行
-      - ", "  (カンマ+スペース、main.py出力形式)
-      - "/"   (スラッシュ単独)
+    正規表現で "識別子(役割)" パターンを直接抽出。
+    識別子には区切り文字 (, / | () 改行) を含めないため、
+    "(organizer)" のような不正な空識別子を確実に除外できる。
+
+    対応する例:
+      "user1@x.com(writer), user2@y.com(reader)"  → カンマ区切り
+      "user1@x.com(writer) / user2@y.com(reader)" → スラッシュ区切り
+      "user1@x.com(writer) | user2@y.com(reader)" → パイプ区切り
+      "AGRIHD グループ(fileOrganizer), foo@x(reader)" → 日本語グループ名
+
+    除外対象:
+      "(organizer)" 単独 (識別子なし)
+      ", (organizer)" のように識別子が抜けているケース
     """
     s = str(cell).strip()
     if not s:
         return []
 
-    if "|" in s:
-        parts = re.split(r"\s*\|\s*", s)
-    elif " / " in s:
-        parts = s.split(" / ")
-    elif "\n" in s:
-        parts = s.split("\n")
-    elif ", " in s:
-        # main.py 出力形式: "user1@x.com(writer), user2@y.com(reader)"
-        # メールアドレスやrole内にはカンマが入らないので安全に分割可能
-        parts = re.split(r",\s+", s)
-    elif "/" in s:
-        parts = s.split("/")
-    else:
-        parts = [s]
+    # 識別子部分: 区切り文字 (, / | () 改行) を含まない1文字以上
+    # 役割部分:   ( ) を含まない1文字以上
+    pattern = re.compile(r'([^,/|()\n]+?)\s*\(([^()]+)\)')
+    matches = pattern.findall(s)
 
     results = []
-    for p in parts:
-        p = p.strip()
-        if not p:
+    seen    = set()
+    for identity, role in matches:
+        identity = identity.strip()
+        # 空、短すぎ (1文字未満)、または明らかに不正なケースは除外
+        if not identity or len(identity) < 2:
             continue
-        m = re.match(r"^(.+?)\s*\(([^)]+)\)\s*$", p)
-        if m:
-            email = m.group(1).strip()
-            role  = normalize_role(m.group(2))
-            results.append(f"{email} ({role})" if role else email)
+        # 識別子内に () が残っていたら除外（ネスト等の不正なケース）
+        if "(" in identity or ")" in identity:
+            continue
+        role_norm = normalize_role(role.strip())
+        formatted = f"{identity} ({role_norm})" if role_norm else identity
+        if formatted not in seen:
+            seen.add(formatted)
+            results.append(formatted)
+
+    # フォールバック: 何もマッチしなかった場合
+    if not results:
+        if " / " in s:
+            parts = s.split(" / ")
+        elif "\n" in s:
+            parts = s.split("\n")
+        elif ", " in s:
+            parts = re.split(r",\s+", s)
+        elif "/" in s:
+            parts = s.split("/")
         else:
-            results.append(p)
+            parts = [s]
+        for p in parts:
+            p = p.strip()
+            if p and len(p) >= 2 and p not in seen:
+                seen.add(p)
+                results.append(p)
+
     return results
 
 def parse_users_from_row(row):
