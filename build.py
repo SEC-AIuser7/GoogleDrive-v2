@@ -74,53 +74,156 @@ def load_config():
 # ============================================================
 def load_from_csv(cfg):
     """
-    GASが出力したCSVを読み込む。
+    GASまたはmain.pyが出力したCSVを読み込む。
 
     優先順:
       1. 環境変数 CSV_FILE_PATH  (ローカルパス)
       2. build_config.json の csv_file_path
-      3. 環境変数 CSV_DRIVE_FILE_ID → Drive API でダウンロード
-      4. build_config.json の csv_drive_file_id → Drive API でダウンロード
+      3. 環境変数 CSV_DRIVE_FILE_ID → Drive APIでファイルIDから直接ダウンロード
+      4. 環境変数 OUTPUT_FOLDER_ID → フォルダ内から shared_drive_structure.csv を検索
+      5. build_config.json の csv_drive_file_id → Drive APIでダウンロード
+      6. build_config.json の output_folder_id → フォルダ内から検索
 
-    GAS出力CSVのヘッダ:
+    main.py 出力CSVのヘッダ:
       SharedDrive, Level1〜Level6, URL, Permissions
     """
-    local_path    = os.environ.get("CSV_FILE_PATH")    or cfg.get("csv_file_path", "")
+    local_path = os.environ.get("CSV_FILE_PATH") or cfg.get("csv_file_path", "")
     drive_file_id = os.environ.get("CSV_DRIVE_FILE_ID") or cfg.get("csv_drive_file_id", "")
+    output_folder_id = (
+        os.environ.get("OUTPUT_FOLDER_ID")
+        or cfg.get("output_folder_id", "")
+        or "1ZqjDtUgYzueDU2_I0FJifiNPV1QFdnBF"
+    )
+    csv_file_name = cfg.get("csv_file_name", "shared_drive_structure.csv")
 
-    if not local_path and drive_file_id:
-        local_path = _download_csv_from_drive(drive_file_id, cfg)
+    if not local_path:
+        if drive_file_id:
+            # ファイルIDが直接指定されている場合
+            local_path = _download_csv_from_drive(drive_file_id, cfg)
+        elif output_folder_id:
+            # フォルダから最新のCSVを検索
+            print(f"  フォルダ内から '{csv_file_name}' を検索中...")
+            file_id = _find_csv_in_folder(output_folder_id, csv_file_name, cfg)
+            if file_id:
+                print(f"  最新CSV発見: {file_id}")
+                local_path = _download_csv_from_drive(file_id, cfg)
 
     if not local_path or not os.path.exists(local_path):
         raise FileNotFoundError(
             "CSVファイルが見つかりません。\n"
-            "  build_config.json の csv_file_path または csv_drive_file_id を設定するか、\n"
-            "  環境変数 CSV_FILE_PATH / CSV_DRIVE_FILE_ID を指定してください。"
+            "  build_config.json の csv_file_path / csv_drive_file_id / output_folder_id を設定するか、\n"
+            "  環境変数 CSV_FILE_PATH / CSV_DRIVE_FILE_ID / OUTPUT_FOLDER_ID を指定してください。"
         )
 
     print(f"  ソース: CSV")
     print(f"  ファイル: {local_path}")
+    print(f"  ファイルサイズ: {os.path.getsize(local_path):,} バイト")
 
     df = pd.read_csv(local_path, dtype=str, encoding="utf-8-sig")
     df = df.fillna("")
 
-    # GAS出力の英語ヘッダを日本語カラム名にリネーム
+    # ★デバッグ出力（CSVの実態を必ず出す）
+    print(f"  CSV 行数: {len(df)}")
+    print(f"  CSV カラム: {list(df.columns)}")
+    if len(df) > 0:
+        print(f"  CSV 最初の3行（リネーム前）:")
+        try:
+            print(df.head(3).to_string(max_colwidth=40))
+        except Exception:
+            pass
+
+    # 英語ヘッダ → 日本語ヘッダにリネーム（main.py出力対応）
     col_map = {
-        "SharedDrive": "共有ドライブ名",
-        "Level1": "階層1", "Level2": "階層2", "Level3": "階層3",
-        "Level4": "階層4", "Level5": "階層5", "Level6": "階層6",
+        "SharedDrive":  "共有ドライブ名",
+        "Level1":       "階層1",
+        "Level2":       "階層2",
+        "Level3":       "階層3",
+        "Level4":       "階層4",
+        "Level5":       "階層5",
+        "Level6":       "階層6",
         "URL":          "フォルダURL",
         "Permissions":  "全権限",
+        # 別名揺れにも対応
+        "shared_drive": "共有ドライブ名",
+        "drive_name":   "共有ドライブ名",
+        "ドライブ名":    "共有ドライブ名",
+        "level1":       "階層1",
+        "level2":       "階層2",
+        "level3":       "階層3",
+        "level4":       "階層4",
+        "level5":       "階層5",
+        "level6":       "階層6",
+        "url":          "フォルダURL",
+        "permissions":  "全権限",
+        "全アクセス権限": "全権限",
     }
-    df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+    rename_map = {k: v for k, v in col_map.items() if k in df.columns}
+    if rename_map:
+        print(f"  カラムリネーム: {rename_map}")
+        df = df.rename(columns=rename_map)
 
-    # GASのパイプ区切り権限情報をスラッシュ区切りに統一
-    # 例: "a@x.com(writer) | b@y.com(reader)" → "a@x.com(writer) / b@y.com(reader)"
+    # GAS時代のパイプ区切り権限情報をスラッシュ区切りに統一
     if "全権限" in df.columns:
         df["全権限"] = df["全権限"].str.replace(r"\s*\|\s*", " / ", regex=True)
 
+    print(f"  最終カラム: {list(df.columns)}")
+
     source_label = os.path.basename(local_path)
     return df, source_label
+
+
+def _find_csv_in_folder(folder_id, file_name, cfg):
+    """
+    指定フォルダ内から file_name に一致するファイルのIDを返す。
+    複数あれば最新のものを返す（modifiedTime で降順ソート）。
+    見つからなければ None。
+    """
+    try:
+        from google.oauth2.service_account import Credentials
+        from googleapiclient.discovery import build as g_build
+    except ImportError:
+        print("エラー: google-api-python-client が必要です。")
+        raise
+
+    subject_email = os.environ.get("SUBJECT_EMAIL", "")
+    cred_env = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    scopes = ["https://www.googleapis.com/auth/drive"]
+
+    if cred_env:
+        cred_info = json.loads(cred_env)
+        creds = Credentials.from_service_account_info(
+            cred_info, scopes=scopes,
+            subject=subject_email if subject_email else None,
+        )
+    else:
+        cred_file = cfg.get("credentials_file", "credentials.json")
+        if not os.path.isabs(cred_file):
+            cred_file = os.path.join(SCRIPT_DIR, cred_file)
+        if not os.path.exists(cred_file):
+            return None
+        creds = Credentials.from_service_account_file(
+            cred_file, scopes=scopes,
+            subject=subject_email if subject_email else None,
+        )
+
+    service = g_build("drive", "v3", credentials=creds, cache_discovery=False)
+
+    query = (
+        f"'{folder_id}' in parents "
+        f"and name='{file_name}' "
+        f"and trashed=false"
+    )
+    resp = service.files().list(
+        q=query,
+        fields="files(id, name, modifiedTime)",
+        orderBy="modifiedTime desc",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True,
+    ).execute()
+    files = resp.get("files", [])
+    if files:
+        return files[0]["id"]
+    return None
 
 
 def _download_csv_from_drive(file_id, cfg):
@@ -138,7 +241,7 @@ def _download_csv_from_drive(file_id, cfg):
     subject_email = os.environ.get("SUBJECT_EMAIL", "")
 
     cred_env = os.environ.get("GOOGLE_CREDENTIALS_JSON")
-    scopes   = ["https://www.googleapis.com/auth/drive"]
+    scopes   = ["https://www.googleapis.com/auth/drive.readonly"]
     if cred_env:
         cred_info = json.loads(cred_env)
         creds = Credentials.from_service_account_info(
