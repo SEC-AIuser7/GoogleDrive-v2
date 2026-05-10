@@ -156,6 +156,14 @@ def load_from_csv(cfg):
         "url":          "フォルダURL",
         "permissions":  "全権限",
         "全アクセス権限": "全権限",
+        # 数字単独カラム（GAS旧形式、Sheets→CSVエクスポート時など）
+        "1":            "階層1",
+        "2":            "階層2",
+        "3":            "階層3",
+        "4":            "階層4",
+        "5":            "階層5",
+        "6":            "階層6",
+        "権限":          "全権限",
     }
     rename_map = {k: v for k, v in col_map.items() if k in df.columns}
     if rename_map:
@@ -241,7 +249,7 @@ def _download_csv_from_drive(file_id, cfg):
     subject_email = os.environ.get("SUBJECT_EMAIL", "")
 
     cred_env = os.environ.get("GOOGLE_CREDENTIALS_JSON")
-    scopes   = ["https://www.googleapis.com/auth/drive"]
+    scopes   = ["https://www.googleapis.com/auth/drive.readonly"]
     if cred_env:
         cred_info = json.loads(cred_env)
         creds = Credentials.from_service_account_info(
@@ -316,7 +324,7 @@ def load_from_sheets(cfg):
     cred_env = os.environ.get("GOOGLE_CREDENTIALS_JSON")
     scopes   = [
         "https://www.googleapis.com/auth/spreadsheets.readonly",
-        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/drive.readonly",
     ]
     if cred_env:
         from google.oauth2.service_account import Credentials
