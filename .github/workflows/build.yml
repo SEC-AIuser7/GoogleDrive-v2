@@ -36,6 +36,7 @@ jobs:
         env:
           DATA_SOURCE: csv
           CSV_DRIVE_FILE_ID: ${{ secrets.CSV_DRIVE_FILE_ID }}
+          OUTPUT_FOLDER_ID: ${{ secrets.OUTPUT_FOLDER_ID }}
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
           SUBJECT_EMAIL: ${{ secrets.SUBJECT_EMAIL }}
         run: |
