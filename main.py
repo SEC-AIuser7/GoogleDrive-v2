@@ -45,7 +45,7 @@ except ImportError:
 OUTPUT_FOLDER_ID = os.environ.get(
     "OUTPUT_FOLDER_ID", "1ZqjDtUgYzueDU2_I0FJifiNPV1QFdnBF"
 )
-OUTPUT_FILE_NAME = "shared_drive_structure.csv"
+OUTPUT_FILE_NAME = "shared_drive_structure【毎朝5時に更新中】.csv"
 
 # ドメイン全体の委任で使用するWorkspace管理者メールアドレス
 # 環境変数 SUBJECT_EMAIL から取得（GitHub Secretsに登録）
