@@ -94,7 +94,7 @@ def load_from_csv(cfg):
         or cfg.get("output_folder_id", "")
         or "1ZqjDtUgYzueDU2_I0FJifiNPV1QFdnBF"
     )
-    csv_file_name = cfg.get("csv_file_name", "shared_drive_structure.csv")
+    csv_file_name = cfg.get("csv_file_name", "shared_drive_structure【毎朝5時に更新中】.csv")
 
     if not local_path:
         if drive_file_id:
