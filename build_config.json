@@ -11,7 +11,7 @@
   "_csv_drive_file_id_note": "CSVファイルのGoogle DriveファイルIDを直接指定する場合に使用。空白なら下のoutput_folder_idから自動検索。",
 
   "output_folder_id": "1ZqjDtUgYzueDU2_I0FJifiNPV1QFdnBF",
-  "csv_file_name": "shared_drive_structure.csv",
+  "csv_file_name": "shared_drive_structure【毎朝5時に更新中】.csv",
   "_output_folder_id_note": "main.pyのCSV出力先フォルダID。csv_file_name のファイルを自動検索する。GitHub Secretsの OUTPUT_FOLDER_ID で上書き可能。",
 
   "_sheets_note": "source: sheets の場合のみ使用",
